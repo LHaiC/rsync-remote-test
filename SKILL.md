@@ -1,6 +1,6 @@
 ---
 name: rsync-remote-test
-description: Use when working in a local Linux checkout that must be synced one-way to an SSH-accessible remote development server for remote build, test, or run commands, especially when the remote has no outbound internet.
+description: Use when a local Linux checkout needs an SSH-accessible remote build/test/run host, including remote-first bootstrap, one-way source sync, and safe retrieval of remote result artifacts.
 ---
 
 # Rsync Remote Test
@@ -11,6 +11,7 @@ Use this skill to bootstrap a local checkout from an SSH-accessible remote devel
 
 - Edit only the local checkout. Do not edit files through `ssh`, remote shells, or remote editors.
 - After bootstrap, sync only local -> remote. Remote -> local is allowed only through the explicit bootstrap `pull` command.
+- Remote run outputs may be fetched only through `fetch-artifacts` and only from configured artifact paths.
 - Use only the configured remote development directory. Do not push to production, shared deploy, or system directories.
 - Do not invent fallback hosts, directories, tmux sessions, or cleanup commands. If config is missing or ambiguous, stop and ask.
 - Treat remote test results as valid only after reading actual remote output.
@@ -62,14 +63,35 @@ Keep generated config files local unless the user explicitly wants project-speci
    ```bash
    ~/.codex/skills/rsync-remote-test/scripts/remote-dev.sh log 120
    ```
+9. If remote runs produced result artifacts, fetch only allowlisted paths:
+   ```bash
+   ~/.codex/skills/rsync-remote-test/scripts/remote-dev.sh fetch-artifacts --dry-run
+   ~/.codex/skills/rsync-remote-test/scripts/remote-dev.sh fetch-artifacts
+   ```
 
 ## Delete Policy
 
-`pull` never deletes local files and has no delete option. `sync` requires exactly one of `--delete` or `--no-delete`.
+`pull` never deletes local files and has no delete option. `sync` requires exactly one of `--delete` or `--no-delete`. `fetch-artifacts` does not delete unless `--delete` is explicit.
 
 - Use `--no-delete` when unsure, during first setup, or when remote build directories may include useful state.
 - Use `--delete` when the remote source mirror must match local tracked/untracked source files.
 - The script never uses `--delete-excluded`, so excluded build caches such as `target/` and `build/` are not removed by rsync.
+- Rsync uses `--no-owner --no-group` to avoid cross-account group metadata noise such as `.f.....g...`; it does not use `--no-perms`, so executable bits still transfer.
+
+## Artifact Fetch
+
+Set `REMOTE_ARTIFACT_PATHS` in `.remote-dev.env` before fetching remote outputs:
+
+```bash
+REMOTE_ARTIFACT_PATHS=results,logs,outputs,pr/test/results
+```
+
+Rules:
+
+- Entries must be relative directories under `REMOTE_ROOT`.
+- Fetched files land under `LOCAL_ROOT/remote_artifacts/<entry>/`.
+- Whole source roots such as `pr`, `sta`, `.git`, `.`, absolute paths, parent traversal, globs, and whitespace are rejected.
+- `remote_artifacts/` is excluded from local -> remote source sync.
 
 ## Remote Execution
 
@@ -79,6 +101,7 @@ Keep generated config files local unless the user explicitly wants project-speci
 
 ## Failure Handling
 
-- Missing config, missing exclude file, unsafe remote root, non-root local cwd, dirty bootstrap pull target, or unknown delete behavior is a hard stop.
+- Missing config, missing exclude file, unsafe remote root, non-root local cwd, dirty bootstrap pull target, empty artifact allowlist, unsafe artifact path, or unknown delete behavior is a hard stop.
 - If `sync --dry-run` shows surprising deletes or uploads, discuss with the user before running a real sync.
+- If `fetch-artifacts --dry-run` shows source files or unexpected deletes, stop and discuss instead of widening the allowlist.
 - If remote build/test fails, diagnose from the remote output and local source state. Do not patch remote files manually.

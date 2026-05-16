@@ -1,4 +1,4 @@
 interface:
   display_name: "Rsync Remote Test"
-  short_description: "Sync local code to a remote test host"
-  default_prompt: "Use $rsync-remote-test to sync this local checkout to my remote dev host and run tests there."
+  short_description: "Sync, test remotely, and fetch artifacts"
+  default_prompt: "Use $rsync-remote-test to bind this local checkout to my remote dev host, run tests there, and fetch result artifacts safely."

@@ -16,6 +16,8 @@ Usage:
   remote-dev.sh bind <remote-host> <remote-root> [tmux-session]
   remote-dev.sh pull --dry-run
   remote-dev.sh pull
+  remote-dev.sh fetch-artifacts --dry-run
+  remote-dev.sh fetch-artifacts [--delete]
   remote-dev.sh sync --dry-run --delete|--no-delete
   remote-dev.sh sync --delete|--no-delete
   remote-dev.sh run -- '<remote command>'
@@ -64,6 +66,7 @@ load_config() {
   : "${REMOTE_ROOT:?REMOTE_ROOT is required in $CONFIG_FILE}"
   : "${RSYNC_EXCLUDE_FILE:?RSYNC_EXCLUDE_FILE is required in $CONFIG_FILE}"
   REMOTE_TMUX=${REMOTE_TMUX:-}
+  REMOTE_ARTIFACT_PATHS=${REMOTE_ARTIFACT_PATHS:-}
 
   validate_simple_path LOCAL_ROOT "$LOCAL_ROOT"
   validate_simple_path REMOTE_HOST "$REMOTE_HOST"
@@ -86,6 +89,7 @@ build/
 cmake-build-*/
 node_modules/
 .venv/
+remote_artifacts/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
@@ -121,9 +125,14 @@ REMOTE_HOST=$remote_host
 REMOTE_ROOT=$remote_root
 REMOTE_TMUX=$remote_tmux
 RSYNC_EXCLUDE_FILE=$DEFAULT_EXCLUDE_FILE
+REMOTE_ARTIFACT_PATHS=
 EOF
   write_default_excludes
   printf 'Created %s and %s\n' "$CONFIG_FILE" "$DEFAULT_EXCLUDE_FILE"
+}
+
+rsync_base_args() {
+  printf '%s\0' rsync -az --no-owner --no-group --human-readable --info=stats2,progress2
 }
 
 cmd_bind() {
@@ -155,11 +164,57 @@ cmd_pull() {
   fi
 
   local -a args
-  args=(rsync -az --human-readable --info=stats2,progress2)
+  mapfile -d '' -t args < <(rsync_base_args)
   [ "$dry_run" -eq 1 ] && args+=(--dry-run)
   args+=(--exclude-from="$LOCAL_ROOT/$RSYNC_EXCLUDE_FILE")
   args+=("$REMOTE_HOST:${REMOTE_ROOT%/}/" "$LOCAL_ROOT/")
   "${args[@]}"
+}
+
+validate_artifact_path() {
+  local artifact=$1
+  while [ "${artifact%/}" != "$artifact" ]; do
+    artifact=${artifact%/}
+  done
+
+  [ -n "$artifact" ] || return 1
+  contains_space "$artifact" && return 1
+  case "$artifact" in
+    /*|.|..|*..*|*'*'*|*'?'*|*'['*|*']'*) return 1 ;;
+    pr|sta|.git) return 1 ;;
+  esac
+  printf '%s' "$artifact"
+}
+
+cmd_fetch_artifacts() {
+  load_config
+  local dry_run=0 delete_mode=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --dry-run) dry_run=1 ;;
+      --delete) delete_mode=1 ;;
+      *) usage; fail "unknown fetch-artifacts option: $1" ;;
+    esac
+    shift
+  done
+  [ -n "$REMOTE_ARTIFACT_PATHS" ] || fail "REMOTE_ARTIFACT_PATHS is empty"
+
+  local IFS=',' raw normalized
+  local -a artifacts args
+  read -r -a artifacts <<< "$REMOTE_ARTIFACT_PATHS"
+  [ "${#artifacts[@]}" -gt 0 ] || fail "REMOTE_ARTIFACT_PATHS is empty"
+
+  for raw in "${artifacts[@]}"; do
+    if ! normalized=$(validate_artifact_path "$raw"); then
+      fail "invalid artifact path: $raw"
+    fi
+    mapfile -d '' -t args < <(rsync_base_args)
+    [ "$dry_run" -eq 1 ] && args+=(--dry-run)
+    [ "$delete_mode" -eq 1 ] && args+=(--delete)
+    args+=("$REMOTE_HOST:${REMOTE_ROOT%/}/$normalized/" "$LOCAL_ROOT/remote_artifacts/$normalized/")
+    [ "$dry_run" -eq 1 ] || mkdir -p "$LOCAL_ROOT/remote_artifacts/$normalized"
+    "${args[@]}"
+  done
 }
 
 cmd_init() {
@@ -186,9 +241,10 @@ cmd_sync() {
   [ -n "$delete_mode" ] || fail "choose exactly one of --delete or --no-delete"
 
   local -a args
-  args=(rsync -az --human-readable --info=stats2,progress2)
+  mapfile -d '' -t args < <(rsync_base_args)
   [ "$dry_run" -eq 1 ] && args+=(--dry-run)
   [ "$delete_mode" = '--delete' ] && args+=(--delete)
+  args+=(--exclude=remote_artifacts/)
   args+=(--exclude-from="$LOCAL_ROOT/$RSYNC_EXCLUDE_FILE")
   args+=("$LOCAL_ROOT/" "$REMOTE_HOST:${REMOTE_ROOT%/}/")
   "${args[@]}"
@@ -236,6 +292,7 @@ main() {
     init) cmd_init "$@" ;;
     bind) cmd_bind "$@" ;;
     pull) cmd_pull "$@" ;;
+    fetch-artifacts) cmd_fetch_artifacts "$@" ;;
     sync) cmd_sync "$@" ;;
     run) cmd_run "$@" ;;
     log) cmd_log "$@" ;;
