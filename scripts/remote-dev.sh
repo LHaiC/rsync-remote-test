@@ -13,6 +13,9 @@ usage() {
   cat >&2 <<'EOF'
 Usage:
   remote-dev.sh init <remote-host> <remote-root> [tmux-session]
+  remote-dev.sh bind <remote-host> <remote-root> [tmux-session]
+  remote-dev.sh pull --dry-run
+  remote-dev.sh pull
   remote-dev.sh sync --dry-run --delete|--no-delete
   remote-dev.sh sync --delete|--no-delete
   remote-dev.sh run -- '<remote command>'
@@ -92,9 +95,9 @@ __pycache__/
 EOF
 }
 
-cmd_init() {
-  [ "$#" -ge 2 ] || { usage; fail "init requires <remote-host> <remote-root> [tmux-session]"; }
-  [ "$#" -le 3 ] || { usage; fail "too many init arguments"; }
+write_project_config() {
+  [ "$#" -ge 2 ] || { usage; fail "bind requires <remote-host> <remote-root> [tmux-session]"; }
+  [ "$#" -le 3 ] || { usage; fail "too many bind arguments"; }
   [ ! -e "$CONFIG_FILE" ] || fail "$CONFIG_FILE already exists"
   [ ! -e "$DEFAULT_EXCLUDE_FILE" ] || fail "$DEFAULT_EXCLUDE_FILE already exists"
 
@@ -121,6 +124,49 @@ RSYNC_EXCLUDE_FILE=$DEFAULT_EXCLUDE_FILE
 EOF
   write_default_excludes
   printf 'Created %s and %s\n' "$CONFIG_FILE" "$DEFAULT_EXCLUDE_FILE"
+}
+
+cmd_bind() {
+  write_project_config "$@"
+}
+
+local_bootstrap_clean() {
+  local found
+  found=$(find "$LOCAL_ROOT" -mindepth 1 -maxdepth 1 \
+    ! -name "$CONFIG_FILE" \
+    ! -name "$DEFAULT_EXCLUDE_FILE" \
+    -print -quit)
+  [ -z "$found" ]
+}
+
+cmd_pull() {
+  load_config
+  local dry_run=0
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --dry-run) dry_run=1 ;;
+      *) usage; fail "unknown pull option: $1" ;;
+    esac
+    shift
+  done
+
+  if [ "$dry_run" -eq 0 ] && ! local_bootstrap_clean; then
+    fail "local directory is not bootstrap-clean; only $CONFIG_FILE and $DEFAULT_EXCLUDE_FILE may exist before pull"
+  fi
+
+  local -a args
+  args=(rsync -az --human-readable --info=stats2,progress2)
+  [ "$dry_run" -eq 1 ] && args+=(--dry-run)
+  args+=(--exclude-from="$LOCAL_ROOT/$RSYNC_EXCLUDE_FILE")
+  args+=("$REMOTE_HOST:${REMOTE_ROOT%/}/" "$LOCAL_ROOT/")
+  "${args[@]}"
+}
+
+cmd_init() {
+  [ "$#" -ge 2 ] || { usage; fail "init requires <remote-host> <remote-root> [tmux-session]"; }
+  [ "$#" -le 3 ] || { usage; fail "too many init arguments"; }
+  write_project_config "$@"
+  cmd_pull
 }
 
 cmd_sync() {
@@ -188,6 +234,8 @@ main() {
   shift
   case "$subcommand" in
     init) cmd_init "$@" ;;
+    bind) cmd_bind "$@" ;;
+    pull) cmd_pull "$@" ;;
     sync) cmd_sync "$@" ;;
     run) cmd_run "$@" ;;
     log) cmd_log "$@" ;;
