@@ -23,12 +23,12 @@ Usage:
   remote-dev.sh pull-git-metadata --path <relative-path>
   remote-dev.sh pull-git-metadata --dry-run --root-git
   remote-dev.sh pull-git-metadata --root-git
-  remote-dev.sh fetch-artifacts --dry-run
-  remote-dev.sh fetch-artifacts [--delete]
   remote-dev.sh push --dry-run --delete|--no-delete
   remote-dev.sh push --delete|--no-delete
   remote-dev.sh push-path --dry-run --delete|--no-delete --path <relative-path>
   remote-dev.sh push-path --delete|--no-delete --path <relative-path>
+  remote-dev.sh sync --dry-run --delete|--no-delete
+  remote-dev.sh sync --delete|--no-delete
   remote-dev.sh run -- '<remote command>'
   remote-dev.sh log [lines]
 EOF
@@ -103,7 +103,6 @@ load_config() {
   PUSH_EXCLUDE_FILE=
   PULL_EXCLUDE_FILE=
   REMOTE_PULL_PATHS=
-  REMOTE_ARTIFACT_PATHS=
 
   local line key value
   while IFS= read -r line || [ -n "$line" ]; do
@@ -117,7 +116,6 @@ load_config() {
       PUSH_EXCLUDE_FILE) PUSH_EXCLUDE_FILE=$value ;;
       PULL_EXCLUDE_FILE) PULL_EXCLUDE_FILE=$value ;;
       REMOTE_PULL_PATHS) REMOTE_PULL_PATHS=$value ;;
-      REMOTE_ARTIFACT_PATHS) REMOTE_ARTIFACT_PATHS=$value ;;
       *) fail "unknown config key: $key" ;;
     esac
   done < "$CONFIG_FILE"
@@ -160,7 +158,6 @@ install/
 cmake-build-*/
 node_modules/
 .venv/
-remote_artifacts/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
@@ -218,7 +215,6 @@ REMOTE_TMUX=$remote_tmux
 PUSH_EXCLUDE_FILE=$DEFAULT_PUSH_EXCLUDE_FILE
 PULL_EXCLUDE_FILE=$DEFAULT_PULL_EXCLUDE_FILE
 REMOTE_PULL_PATHS=
-REMOTE_ARTIFACT_PATHS=
 EOF
   write_default_push_ignore
   write_default_pull_ignore
@@ -241,6 +237,33 @@ path_in_list() {
     [ "$needle" = "$normalized" ] && return 0
   done
   return 1
+}
+
+build_pull_only_excludes() {
+  local push_root=$1 raw protected suffix
+  PULL_ONLY_EXCLUDES=()
+  [ -n "$REMOTE_PULL_PATHS" ] || return 0
+
+  local IFS=','
+  local -a entries
+  read -r -a entries <<< "$REMOTE_PULL_PATHS"
+  for raw in "${entries[@]}"; do
+    protected=$(normalize_relative_path "$raw" 2>/dev/null || true)
+    [ -n "$protected" ] || continue
+
+    if [ -z "$push_root" ]; then
+      PULL_ONLY_EXCLUDES+=(--exclude="$protected/")
+      continue
+    fi
+
+    if [ "$push_root" = "$protected" ] || [[ "$push_root" == "$protected/"* ]]; then
+      fail "push path is pull-only: $push_root"
+    fi
+    if [[ "$protected" == "$push_root/"* ]]; then
+      suffix=${protected#"$push_root"/}
+      PULL_ONLY_EXCLUDES+=(--exclude="$suffix/")
+    fi
+  done
 }
 
 cmd_bind() {
@@ -326,42 +349,6 @@ cmd_pull_path() {
   pull_relative_path "$normalized" "$normalized" "$DRY_RUN" "$DELETE_MODE" "$PULL_EXCLUDE_FILE"
 }
 
-validate_artifact_path() {
-  local artifact
-  if ! artifact=$(normalize_relative_path "$1"); then
-    return 1
-  fi
-  [ "$artifact" != .git ] || return 1
-  printf '%s' "$artifact"
-}
-
-cmd_fetch_artifacts() {
-  load_config
-  require_pull_ignore
-  local dry_run=0 delete_mode=0
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --dry-run) dry_run=1 ;;
-      --delete) delete_mode=1 ;;
-      *) usage; fail "unknown fetch-artifacts option: $1" ;;
-    esac
-    shift
-  done
-  [ -n "$REMOTE_ARTIFACT_PATHS" ] || fail "REMOTE_ARTIFACT_PATHS is empty"
-
-  local IFS=',' raw normalized
-  local -a artifacts
-  read -r -a artifacts <<< "$REMOTE_ARTIFACT_PATHS"
-  [ "${#artifacts[@]}" -gt 0 ] || fail "REMOTE_ARTIFACT_PATHS is empty"
-
-  for raw in "${artifacts[@]}"; do
-    if ! normalized=$(validate_artifact_path "$raw"); then
-      fail "invalid artifact path: $raw"
-    fi
-    pull_relative_path "$normalized" "remote_artifacts/$normalized" "$dry_run" "$delete_mode" "$PULL_EXCLUDE_FILE"
-  done
-}
-
 cmd_init() {
   [ "$#" -ge 2 ] || { usage; fail "init requires <remote-host> <remote-root> [tmux-session]"; }
   [ "$#" -le 3 ] || { usage; fail "too many init arguments"; }
@@ -390,7 +377,8 @@ cmd_push() {
   mapfile -d '' -t args < <(rsync_base_args)
   [ "$dry_run" -eq 1 ] && args+=(--dry-run)
   [ "$delete_mode" = '--delete' ] && args+=(--delete)
-  args+=(--exclude=remote_artifacts/)
+  build_pull_only_excludes ''
+  args+=("${PULL_ONLY_EXCLUDES[@]}")
   args+=(--exclude-from="$LOCAL_ROOT/$PUSH_EXCLUDE_FILE")
   args+=("$LOCAL_ROOT/" "$REMOTE_HOST:${REMOTE_ROOT%/}/")
   "${args[@]}"
@@ -435,6 +423,8 @@ cmd_push_path() {
   mapfile -d '' -t args < <(rsync_base_args)
   [ "$DRY_RUN" -eq 1 ] && args+=(--dry-run)
   [ "$DELETE_POLICY" = '--delete' ] && args+=(--delete)
+  build_pull_only_excludes "$normalized"
+  args+=("${PULL_ONLY_EXCLUDES[@]}")
   args+=(--exclude-from="$LOCAL_ROOT/$PUSH_EXCLUDE_FILE")
   args+=("$LOCAL_ROOT/$normalized/" "$REMOTE_HOST:${REMOTE_ROOT%/}/$normalized/")
   "${args[@]}"
@@ -601,8 +591,7 @@ main() {
     pull) cmd_pull "$@" ;;
     pull-path) cmd_pull_path "$@" ;;
     pull-git-metadata) cmd_pull_git_metadata "$@" ;;
-    fetch-artifacts) cmd_fetch_artifacts "$@" ;;
-    push) cmd_push "$@" ;;
+    push|sync) cmd_push "$@" ;;
     push-path) cmd_push_path "$@" ;;
     run) cmd_run "$@" ;;
     log) cmd_log "$@" ;;

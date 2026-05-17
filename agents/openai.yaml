@@ -1,4 +1,4 @@
 interface:
   display_name: "Rsync Remote Test"
   short_description: "Controlled rsync push/pull for remote testing"
-  default_prompt: "Use $rsync-remote-test to bind this local checkout to my remote dev host, push or pull explicit paths safely, run tests there, and fetch result artifacts."
+  default_prompt: "Use $rsync-remote-test to bind this local checkout to my remote dev host, push or pull explicit paths safely, and run tests there."
