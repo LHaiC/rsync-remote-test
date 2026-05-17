@@ -147,6 +147,15 @@ test_fetch_artifacts_is_removed() {
   assert_contains "$root/err.log" "unknown subcommand: fetch-artifacts"
 }
 
+test_sync_alias_is_removed() {
+  local root
+  root=$(new_project)
+  if (cd "$root" && "$REMOTE_DEV" sync --dry-run --no-delete) 2>"$root/err.log"; then
+    fail "sync alias was accepted"
+  fi
+  assert_contains "$root/err.log" "unknown subcommand: sync"
+}
+
 
 test_config_does_not_execute_shell_code() {
   local root marker
@@ -191,6 +200,7 @@ test_push_excludes_pull_only_paths
 test_push_path_blocks_or_excludes_pull_only_paths
 test_pull_path_rejects_unallowlisted_path
 test_fetch_artifacts_is_removed
+test_sync_alias_is_removed
 test_config_does_not_execute_shell_code
 test_remote_tokens_reject_shell_metacharacters
 

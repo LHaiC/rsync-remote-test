@@ -27,8 +27,6 @@ Usage:
   remote-dev.sh push --delete|--no-delete
   remote-dev.sh push-path --dry-run --delete|--no-delete --path <relative-path>
   remote-dev.sh push-path --delete|--no-delete --path <relative-path>
-  remote-dev.sh sync --dry-run --delete|--no-delete
-  remote-dev.sh sync --delete|--no-delete
   remote-dev.sh run -- '<remote command>'
   remote-dev.sh log [lines]
 EOF
@@ -591,7 +589,7 @@ main() {
     pull) cmd_pull "$@" ;;
     pull-path) cmd_pull_path "$@" ;;
     pull-git-metadata) cmd_pull_git_metadata "$@" ;;
-    push|sync) cmd_push "$@" ;;
+    push) cmd_push "$@" ;;
     push-path) cmd_push_path "$@" ;;
     run) cmd_run "$@" ;;
     log) cmd_log "$@" ;;

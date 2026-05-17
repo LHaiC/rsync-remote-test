@@ -56,11 +56,11 @@ REMOTE_PULL_PATHS=
    ~/.codex/skills/rsync-remote-test/scripts/remote-dev.sh pull
    ```
 4. Edit and test locally when possible.
-5. Preview local -> remote sync when risk is unclear:
+5. Preview local -> remote push when risk is unclear:
    ```bash
    ~/.codex/skills/rsync-remote-test/scripts/remote-dev.sh push --dry-run --no-delete
    ```
-6. Sync explicitly with one delete policy:
+6. Push explicitly with one delete policy:
    ```bash
    ~/.codex/skills/rsync-remote-test/scripts/remote-dev.sh push --no-delete
    ~/.codex/skills/rsync-remote-test/scripts/remote-dev.sh push --delete
